@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Crop Disease Scanner</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+    <h1>🌿 Crop Disease Scanner</h1>
+    <p class="subtitle">Upload a leaf image to detect crop disease</p>
+
+    <input type="file" id="imageInput" accept="image/*">
+    <button onclick="predictDisease()">Predict</button>
+
+    <div id="result" class="result-box"></div>
+</div>
+
+<script>
+function predictDisease() {
+    const input = document.getElementById("imageInput");
+    const resultDiv = document.getElementById("result");
+
+    if (input.files.length === 0) {
+        alert("Please upload an image");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", input.files[0]);
+
+    fetch("http://127.0.0.1:5000/predict", {
+        method: "POST",
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.error) {
+            resultDiv.innerHTML = `<p style="color:red;">${data.error}</p>`;
+        } else {
+            resultDiv.innerHTML = `
+                <h3>Disease: ${data.disease}</h3>
+                <p><b>Confidence:</b> ${data.confidence.toFixed(2)}%</p>
+                <p><b>Description:</b> ${data.description}</p>
+                <p><b>Precaution:</b> ${data.precaution}</p>
+            `;
+        }
+    })
+    .catch(err => {
+        resultDiv.innerHTML = "<p style='color:red;'>Backend connection failed!</p>";
+        console.error(err);
+    });
+}
+</script>
+
+</body>
+</html>
