@@ -1,27 +1,36 @@
 import sys
 import os
-
-# Allow backend to access root folder (for features.py)
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import pickle
 import joblib
 import numpy as np
+
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+
+# --------------------------------
+# PATH FIX (for Render)
+# --------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.append(ROOT_DIR)
 
 from features import extract_features
 
 # --------------------------------
 # APP SETUP
 # --------------------------------
-app = Flask(__name__)
-CORS(app)  # Enable frontend-backend connection
+app = Flask(
+    __name__,
+    static_folder="../frontend",
+    static_url_path=""
+)
+CORS(app)
 
 # --------------------------------
-# LOAD MODEL & SCALER
+# LOAD MODEL & SCALER (SAFE PATH)
 # --------------------------------
-model = joblib.load("model.pkl")
-scaler = joblib.load("scaler.pkl")
+model = joblib.load(os.path.join(BASE_DIR, "model.pkl"))
+scaler = joblib.load(os.path.join(BASE_DIR, "scaler.pkl"))
 
 # --------------------------------
 # CLASS LABELS
@@ -47,33 +56,37 @@ info = {
 }
 
 # --------------------------------
+# SERVE FRONTEND
+# --------------------------------
+@app.route("/")
+def home():
+    return send_from_directory("../frontend", "index.html")
+
+# --------------------------------
 # PREDICTION API
 # --------------------------------
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
-        # Check if image is sent
         if "image" not in request.files:
             return jsonify({"error": "No image uploaded"}), 400
 
         file = request.files["image"]
-        img_path = "temp.jpg"
+        img_path = os.path.join(BASE_DIR, "temp.jpg")
         file.save(img_path)
 
-        # Extract features
+        # Feature extraction
         features = extract_features(img_path)
         features = scaler.transform([features])
 
-        # Predict
+        # Prediction
         probs = model.predict_proba(features)[0]
         idx = int(np.argmax(probs))
 
         confidence = float(probs[idx] * 100)
         disease = classes[idx]
 
-        # --------------------------------
-        # CONFIDENCE THRESHOLD LOGIC
-        # --------------------------------
+        # Confidence threshold
         if confidence < 60:
             disease = "Healthy"
             description = "The leaf appears healthy or the model is uncertain."
@@ -92,9 +105,8 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 # --------------------------------
-# RUN SERVER
+# RUN SERVER (RENDER READY)
 # --------------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)

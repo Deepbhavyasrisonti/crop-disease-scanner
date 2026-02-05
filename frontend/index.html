@@ -1,58 +1,125 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Crop Disease Scanner</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
+import sys
+import os
+import joblib
+import numpy as np
+import uuid
 
-<div class="container">
-    <h1>🌿 Crop Disease Scanner</h1>
-    <p class="subtitle">Upload a leaf image to detect crop disease</p>
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 
-    <input type="file" id="imageInput" accept="image/*">
-    <button onclick="predictDisease()">Predict</button>
+# --------------------------------
+# PATH FIX (for Render)
+# --------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.append(ROOT_DIR)
 
-    <div id="result" class="result-box"></div>
-</div>
+from features import extract_features
 
-<script>
-function predictDisease() {
-    const input = document.getElementById("imageInput");
-    const resultDiv = document.getElementById("result");
+# --------------------------------
+# APP SETUP
+# --------------------------------
+app = Flask(
+    __name__,
+    static_folder="../frontend",
+    static_url_path=""
+)
+CORS(app)
 
-    if (input.files.length === 0) {
-        alert("Please upload an image");
-        return;
+# --------------------------------
+# LOAD MODEL & SCALER (SAFE PATH)
+# --------------------------------
+model = joblib.load(os.path.join(BASE_DIR, "model.pkl"))
+scaler = joblib.load(os.path.join(BASE_DIR, "scaler.pkl"))
+
+# --------------------------------
+# CLASS LABELS
+# --------------------------------
+classes = ["Healthy", "Leaf Spot", "Blight"]
+
+# --------------------------------
+# DISEASE INFO
+# --------------------------------
+info = {
+    "Healthy": {
+        "description": "The leaf appears healthy with no visible disease symptoms.",
+        "precaution": "No action required. Maintain regular watering and nutrient care."
+    },
+    "Leaf Spot": {
+        "description": "Leaf spot is a plant disease characterized by dark circular spots on leaves.",
+        "precaution": "Remove infected leaves, avoid overhead watering, and apply fungicide if needed."
+    },
+    "Blight": {
+        "description": "Blight is a serious disease causing rapid browning and drying of leaves.",
+        "precaution": "Use disease-free seeds, improve air circulation, and apply recommended fungicides."
     }
-
-    const formData = new FormData();
-    formData.append("image", input.files[0]);
-
-    fetch("http://127.0.0.1:5000/predict", {
-        method: "POST",
-        body: formData
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.error) {
-            resultDiv.innerHTML = `<p style="color:red;">${data.error}</p>`;
-        } else {
-            resultDiv.innerHTML = `
-                <h3>Disease: ${data.disease}</h3>
-                <p><b>Confidence:</b> ${data.confidence.toFixed(2)}%</p>
-                <p><b>Description:</b> ${data.description}</p>
-                <p><b>Precaution:</b> ${data.precaution}</p>
-            `;
-        }
-    })
-    .catch(err => {
-        resultDiv.innerHTML = "<p style='color:red;'>Backend connection failed!</p>";
-        console.error(err);
-    });
 }
-</script>
 
-</body>
-</html>
+# --------------------------------
+# HEALTH CHECK (OPTIONAL BUT GOOD)
+# --------------------------------
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "Backend is running"}), 200
+
+# --------------------------------
+# SERVE FRONTEND
+# --------------------------------
+@app.route("/", methods=["GET"])
+def home():
+    return send_from_directory("../frontend", "index.html")
+
+# --------------------------------
+# PREDICTION API
+# --------------------------------
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        if "image" not in request.files:
+            return jsonify({"error": "No image uploaded"}), 400
+
+        file = request.files["image"]
+
+        # Unique temp file name
+        temp_filename = f"{uuid.uuid4()}.jpg"
+        img_path = os.path.join(BASE_DIR, temp_filename)
+        file.save(img_path)
+
+        # Feature extraction
+        features = extract_features(img_path)
+        features = scaler.transform([features])
+
+        # Prediction
+        probs = model.predict_proba(features)[0]
+        idx = int(np.argmax(probs))
+
+        confidence = float(probs[idx] * 100)
+        disease = classes[idx]
+
+        # Confidence threshold logic
+        if confidence < 60:
+            disease = "Healthy"
+            description = "The leaf appears healthy or the model is uncertain."
+            precaution = "No immediate action required. Monitor plant health regularly."
+        else:
+            description = info[disease]["description"]
+            precaution = info[disease]["precaution"]
+
+        # Cleanup temp file
+        os.remove(img_path)
+
+        return jsonify({
+            "disease": disease,
+            "confidence": round(confidence, 2),
+            "description": description,
+            "precaution": precaution
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --------------------------------
+# RUN SERVER (RENDER READY)
+# --------------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
