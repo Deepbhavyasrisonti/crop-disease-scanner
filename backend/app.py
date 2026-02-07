@@ -1,45 +1,31 @@
 import sys
 import os
-import pickle
 import joblib
 import numpy as np
+import uuid
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
-# --------------------------------
-# PATH FIX (for Render)
-# --------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
-sys.path.append(ROOT_DIR)
+FRONTEND_DIR = os.path.join(ROOT_DIR, "frontend")
 
+sys.path.append(ROOT_DIR)
 from features import extract_features
 
-# --------------------------------
-# APP SETUP
-# --------------------------------
 app = Flask(
     __name__,
-    static_folder="../frontend",
+    static_folder=FRONTEND_DIR,
     static_url_path=""
 )
 CORS(app)
 
-# --------------------------------
-# LOAD MODEL & SCALER (SAFE PATH)
-# --------------------------------
 model = joblib.load(os.path.join(BASE_DIR, "model.pkl"))
 scaler = joblib.load(os.path.join(BASE_DIR, "scaler.pkl"))
 
-# --------------------------------
-# CLASS LABELS
-# --------------------------------
 classes = ["Healthy", "Leaf Spot", "Blight"]
 
-# --------------------------------
-# DISEASE INFO
-# --------------------------------
 info = {
     "Healthy": {
         "description": "The leaf appears healthy with no visible disease symptoms.",
@@ -55,16 +41,14 @@ info = {
     }
 }
 
-# --------------------------------
-# SERVE FRONTEND
-# --------------------------------
+@app.route("/health")
+def health():
+    return jsonify({"status": "Backend is running"})
+
 @app.route("/")
 def home():
-    return send_from_directory("../frontend", "index.html")
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
-# --------------------------------
-# PREDICTION API
-# --------------------------------
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
@@ -72,28 +56,27 @@ def predict():
             return jsonify({"error": "No image uploaded"}), 400
 
         file = request.files["image"]
-        img_path = os.path.join(BASE_DIR, "temp.jpg")
+        img_path = os.path.join(BASE_DIR, f"{uuid.uuid4()}.jpg")
         file.save(img_path)
 
-        # Feature extraction
         features = extract_features(img_path)
         features = scaler.transform([features])
 
-        # Prediction
         probs = model.predict_proba(features)[0]
         idx = int(np.argmax(probs))
 
         confidence = float(probs[idx] * 100)
         disease = classes[idx]
 
-        # Confidence threshold
         if confidence < 60:
             disease = "Healthy"
             description = "The leaf appears healthy or the model is uncertain."
-            precaution = "No immediate action required. Monitor plant health regularly."
+            precaution = "No immediate action required."
         else:
             description = info[disease]["description"]
             precaution = info[disease]["precaution"]
+
+        os.remove(img_path)
 
         return jsonify({
             "disease": disease,
@@ -105,8 +88,5 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --------------------------------
-# RUN SERVER (RENDER READY)
-# --------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
